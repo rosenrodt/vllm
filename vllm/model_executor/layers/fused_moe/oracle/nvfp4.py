@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import os
 from enum import Enum
 
 import torch
@@ -34,6 +35,8 @@ from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import 
 )
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
     QuantKey,
+    kNvfp4Dynamic,
+    kNvfp4Static,
 )
 
 logger = init_logger(__name__)
@@ -253,7 +256,17 @@ def select_nvfp4_moe_backend(
         activation_key: QuantKey | None,
         activation_format: mk.FusedMoEActivationFormat,
     ) -> tuple[NvFp4MoeBackend, type[mk.FusedMoEExperts]]:
-        for k_cls in backend_to_kernel_cls(backend):
+        kernel_classes = backend_to_kernel_cls(backend)
+        parallel = config.moe_parallel_config
+        if (
+            backend == NvFp4MoeBackend.FLASHINFER_TRTLLM
+            and (weight_key, activation_key) == (kNvfp4Static, kNvfp4Dynamic)
+            and parallel.tp_size == parallel.dp_size == parallel.ep_size == 1
+            and os.getenv("FLASHINFER_DIST_AWARE_AUTOTUNE") == "1"
+        ):
+            # DA needs the modular precomputed-routing ABI.
+            kernel_classes = list(reversed(kernel_classes))
+        for k_cls in kernel_classes:
             supported, reason = k_cls.is_supported_config(
                 k_cls, config, weight_key, activation_key, activation_format
             )
