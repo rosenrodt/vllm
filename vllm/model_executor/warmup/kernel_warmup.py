@@ -6,6 +6,7 @@ This is useful specifically for JIT'ed kernels as we don't want JIT'ing to
 happen during model execution.
 """
 
+import os
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -276,13 +277,21 @@ _FLASHINFER_BF16_AUTOTUNE_MAX_TOKENS = 32
 
 def _flashinfer_autotune_token_counts(runner: "GPUModelRunner") -> tuple[int, ...]:
     max_tokens = runner.scheduler_config.max_num_batched_tokens
+    token_counts = [max_tokens]
+    if (
+        runner.vllm_config.kernel_config.moe_backend == "flashinfer_trtllm"
+        and os.environ.get("FLASHINFER_DIST_AWARE_AUTOTUNE") == "1"
+    ):
+        token_counts.extend(
+            runner.vllm_config.compilation_config.cudagraph_capture_sizes or []
+        )
     linear_backend = runner.vllm_config.kernel_config.linear_backend
     if (
         linear_backend == "flashinfer_cutedsl"
         and max_tokens > _FLASHINFER_BF16_AUTOTUNE_MAX_TOKENS
     ):
-        return max_tokens, _FLASHINFER_BF16_AUTOTUNE_MAX_TOKENS
-    return (max_tokens,)
+        token_counts.append(_FLASHINFER_BF16_AUTOTUNE_MAX_TOKENS)
+    return tuple(dict.fromkeys(token_counts))
 
 
 def _run_flashinfer_autotune_dummy_runs(runner: "GPUModelRunner") -> None:
